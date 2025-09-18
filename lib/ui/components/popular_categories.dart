@@ -69,20 +69,28 @@ class PopularCategories extends StatelessWidget {
                       final category = categories[index];
                       final isSelected = category.slug == effectiveSlug;
 
-                      final selectedBackground = _parseColor(
-                        category.selectedAccentColor ?? category.accentColor,
+                      final accent = _parseColor(
+                        category.accentColor,
                         const Color(0xFFFFE0E0),
                       );
-                      final unselectedBackground = Color.lerp(
-                        selectedBackground,
-                        Colors.white,
-                        0.45,
-                      )!;
-                      final selectedText = _parseColor(
-                        category.selectedTextColor ?? category.textColor,
+                      final selectedBackground = _parseOptionalColor(
+                            category.selectedAccentColor,
+                            fallback: accent,
+                          ) ??
+                          accent;
+                      final unselectedBackground =
+                          _contrastingVariant(selectedBackground);
+                      final baseText = _parseColor(
+                        category.textColor,
                         const Color(0xFFE23E3E),
                       );
-                      final unselectedText = selectedText.withOpacity(0.7);
+                      final selectedText = _parseOptionalColor(
+                            category.selectedTextColor,
+                            fallback: baseText,
+                          ) ??
+                          baseText;
+                      final unselectedText =
+                          _mutedTextColor(unselectedBackground, selectedText);
                       final backgroundColor =
                           isSelected ? selectedBackground : unselectedBackground;
                       final textColor =
@@ -214,5 +222,32 @@ class PopularCategories extends StatelessWidget {
       return fallback;
     }
     return Color(parsed);
+  }
+
+  Color? _parseOptionalColor(
+    String? value, {
+    required Color fallback,
+  }) {
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return _parseColor(value, fallback);
+  }
+
+  Color _contrastingVariant(Color color) {
+    final hsl = HSLColor.fromColor(color);
+    final shouldDarken = color.computeLuminance() > 0.5;
+    final delta = shouldDarken ? -0.22 : 0.22;
+    final lightness = (hsl.lightness + delta).clamp(0.0, 1.0);
+    return hsl.withLightness(lightness).toColor();
+  }
+
+  Color _mutedTextColor(Color background, Color reference) {
+    final brightness = ThemeData.estimateBrightnessForColor(background);
+    final hsl = HSLColor.fromColor(reference);
+    final delta = brightness == Brightness.dark ? 0.18 : -0.18;
+    final lightness = (hsl.lightness + delta).clamp(0.0, 1.0);
+    final adjusted = hsl.withLightness(lightness).toColor();
+    return adjusted.withOpacity(0.85);
   }
 }

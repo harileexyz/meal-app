@@ -27,9 +27,12 @@ class PopularCategories extends StatelessWidget {
             final categories = homeStore.categories.toList(growable: false);
             final trendingRecipes =
                 homeStore.trendingRecipes.toList(growable: false);
+            final recentRecipes =
+                homeStore.recentRecipes.toList(growable: false);
             final selectedSlug = homeStore.selectedCategorySlug.value;
             final categoriesLoaded = homeStore.categoriesLoaded.value;
             final trendingLoaded = homeStore.trendingLoaded.value;
+            final recentLoaded = homeStore.recentLoaded.value;
             final error = homeStore.errorMessage.value;
 
             if (!categoriesLoaded && categories.isEmpty) {
@@ -47,15 +50,22 @@ class PopularCategories extends StatelessWidget {
             }
 
             if (categories.isEmpty) {
-              return const Text('Add categories in Firestore to see them here.');
+              return const Text(
+                  'Add categories in Firestore to see them here.');
             }
 
             final effectiveSlug =
                 (selectedSlug?.isNotEmpty == true ? selectedSlug : null) ??
                     categories.first.slug;
-            final filteredRecipes = trendingRecipes
+            var filteredRecipes = trendingRecipes
                 .where((recipe) => recipe.categories.contains(effectiveSlug))
                 .toList(growable: false);
+
+            if (filteredRecipes.isEmpty) {
+              filteredRecipes = recentRecipes
+                  .where((recipe) => recipe.categories.contains(effectiveSlug))
+                  .toList(growable: false);
+            }
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,8 +101,9 @@ class PopularCategories extends StatelessWidget {
                           baseText;
                       final unselectedText =
                           _mutedTextColor(unselectedBackground, selectedText);
-                      final backgroundColor =
-                          isSelected ? selectedBackground : unselectedBackground;
+                      final backgroundColor = isSelected
+                          ? selectedBackground
+                          : unselectedBackground;
                       final textColor =
                           isSelected ? selectedText : unselectedText;
 
@@ -110,7 +121,7 @@ class PopularCategories extends StatelessWidget {
                             borderRadius: BorderRadius.circular(18),
                             border: Border.all(
                               color: isSelected
-                                  ? selectedText.withOpacity(0.8)
+                                  ? selectedText.withValues(alpha: 0.8)
                                   : Colors.transparent,
                               width: 1,
                             ),
@@ -129,7 +140,7 @@ class PopularCategories extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                if (!trendingLoaded && filteredRecipes.isEmpty)
+                if (!trendingLoaded && !recentLoaded && filteredRecipes.isEmpty)
                   const SizedBox(
                     height: 180,
                     child: Center(child: CircularProgressIndicator()),

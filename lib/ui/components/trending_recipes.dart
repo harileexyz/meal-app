@@ -4,7 +4,8 @@ import 'package:provider/provider.dart';
 
 import '../../models/recipe.dart';
 import '../../stores/home_store.dart';
-import '../trending/trending_screen.dart';
+import '../details/details_screen.dart';
+import 'recipe_card_list_tile.dart';
 
 class TrendingRecipes extends StatefulWidget {
   const TrendingRecipes({super.key});
@@ -14,6 +15,34 @@ class TrendingRecipes extends StatefulWidget {
 }
 
 class _TrendingRecipesState extends State<TrendingRecipes> {
+  final Set<String> _savingRecipeIds = <String>{};
+  final Map<String, bool> _expectedSavedStates = <String, bool>{};
+
+  bool _isRecipeLoading(String recipeId, Set<String> savedIds) {
+    if (!_savingRecipeIds.contains(recipeId)) return false;
+
+    final expectedState = _expectedSavedStates[recipeId];
+    if (expectedState == null) return false;
+
+    final actualState = savedIds.contains(recipeId);
+
+    // If the actual state matches expected state, remove from loading
+    if (actualState == expectedState) {
+      // Defer the state update to avoid calling setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _savingRecipeIds.remove(recipeId);
+            _expectedSavedStates.remove(recipeId);
+          });
+        }
+      });
+      return false;
+    }
+
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final homeStore = context.read<HomeStore>();
@@ -42,7 +71,7 @@ class _TrendingRecipesState extends State<TrendingRecipes> {
                   MaterialPageRoute(
                     builder: (_) => Provider<HomeStore>.value(
                       value: homeStore,
-                      child: const TrendingScreen(),
+                      child: const DetailsScreen(title: 'Trending Recipies'),
                     ),
                   ),
                 );
@@ -94,60 +123,13 @@ class _TrendingRecipesState extends State<TrendingRecipes> {
                   final recipe = recipes[index];
                   final isSaved = savedIds.contains(recipe.id);
 
-                  return Container(
-                    width: 180,
-                    margin: const EdgeInsets.only(right: 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _RecipeCard(
-                          recipe: recipe,
-                          isSaved: isSaved,
-                          onToggleSave: () => _toggleSave(homeStore, recipe),
-                          onRate: () => _openRatingSheet(homeStore, recipe),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          recipe.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 12,
-                              backgroundImage: recipe.author.avatarUrl != null
-                                  ? NetworkImage(recipe.author.avatarUrl!)
-                                  : null,
-                              child: recipe.author.avatarUrl == null
-                                  ? Text(
-                                      recipe.author.name
-                                          .substring(0, 1)
-                                          .toUpperCase(),
-                                      style: const TextStyle(fontSize: 12),
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                recipe.authorDisplay,
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 11,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                  return RecipeCardListTile(
+                    recipe: recipe,
+                    isSaved: isSaved,
+                    isLoading: _isRecipeLoading(recipe.id, savedIds),
+                    isHorizontal: true,
+                    onToggleSave: () => _toggleSave(homeStore, recipe),
+                    onRate: () => _openRatingSheet(homeStore, recipe),
                   );
                 },
               );
@@ -164,10 +146,37 @@ class _TrendingRecipesState extends State<TrendingRecipes> {
       return;
     }
 
+    // Check the current state before toggling to determine the action
+    final wasSaved = homeStore.isRecipeSaved(recipe.id);
+    final expectedState = !wasSaved;
+
+    // Add to loading set and track expected state
+    setState(() {
+      _savingRecipeIds.add(recipe.id);
+      _expectedSavedStates[recipe.id] = expectedState;
+    });
+
     try {
       await homeStore.toggleSave(recipe);
+      _showSnackBar(
+        wasSaved
+            ? '${recipe.name} removed from saved'
+            : '${recipe.name} added to saved',
+      );
+    } on StateError catch (_) {
+      _showSnackBar('Sign in to save recipes.');
+      // Remove loading state on error
+      setState(() {
+        _savingRecipeIds.remove(recipe.id);
+        _expectedSavedStates.remove(recipe.id);
+      });
     } catch (error) {
       _showSnackBar('Could not update saved recipes.');
+      // Remove loading state on error
+      setState(() {
+        _savingRecipeIds.remove(recipe.id);
+        _expectedSavedStates.remove(recipe.id);
+      });
     }
   }
 
@@ -249,118 +258,6 @@ class _TrendingRecipesState extends State<TrendingRecipes> {
       SnackBar(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-}
-
-class _RecipeCard extends StatelessWidget {
-  const _RecipeCard({
-    required this.recipe,
-    required this.isSaved,
-    required this.onToggleSave,
-    required this.onRate,
-  });
-
-  final Recipe recipe;
-  final bool isSaved;
-  final VoidCallback onToggleSave;
-  final VoidCallback onRate;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 140,
-      width: double.infinity,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            recipe.primaryImage.isNotEmpty
-                ? Image.network(
-                    recipe.primaryImage,
-                    fit: BoxFit.cover,
-                  )
-                : Container(
-                    color: Colors.grey[200],
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.restaurant_menu, size: 32),
-                  ),
-            Positioned(
-              top: 8,
-              left: 8,
-              child: InkWell(
-                onTap: onRate,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.star,
-                        color: Colors.yellow,
-                        size: 12,
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        recipe.ratingSummary.average.toStringAsFixed(1),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: InkWell(
-                onTap: onToggleSave,
-                borderRadius: BorderRadius.circular(6),
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Icon(
-                    isSaved ? Icons.bookmark : Icons.bookmark_outline,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  recipe.timeLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

@@ -58,6 +58,34 @@ class RecipeRepository {
             snapshot.docs.map(Category.fromDocument).toList(growable: false));
   }
 
+  Future<List<Recipe>> searchRecipes(String query, {int limit = 20}) async {
+    final terms = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((term) => term.isNotEmpty)
+        .toList();
+
+    if (terms.isEmpty) {
+      return const <Recipe>[];
+    }
+
+    final tokens = terms.length > 10 ? terms.sublist(0, 10) : terms;
+
+    Query<Map<String, dynamic>> ref = _recipeCollection;
+    if (tokens.length == 1) {
+      ref = ref.where('searchKeywords', arrayContains: tokens.first);
+    } else {
+      ref = ref.where('searchKeywords', arrayContainsAny: tokens);
+    }
+
+    final snapshot = await ref
+        .orderBy('ratingSummary.average', descending: true)
+        .limit(limit)
+        .get();
+
+    return snapshot.docs.map(Recipe.fromDocument).toList(growable: false);
+  }
+
   Stream<Set<String>> watchSavedRecipeIds(String userId) {
     if (userId.isEmpty) {
       return const Stream<Set<String>>.empty();

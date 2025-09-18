@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../models/recipe.dart';
 import '../../repositories/recipe_repository.dart';
 import '../../theme/app_theme.dart';
+import '../components/recipe_card_list_tile.dart';
 
 class SavedScreen extends StatefulWidget {
   const SavedScreen({super.key});
@@ -14,6 +15,47 @@ class SavedScreen extends StatefulWidget {
 
 class _SavedScreenState extends State<SavedScreen> {
   final RecipeRepository _repository = RecipeRepository();
+  final Set<String> _savingRecipeIds = <String>{};
+  final Map<String, bool> _expectedSavedStates = <String, bool>{};
+
+  bool _isRecipeLoading(String recipeId, List<Recipe> recipes) {
+    if (!_savingRecipeIds.contains(recipeId)) return false;
+
+    final expectedState = _expectedSavedStates[recipeId];
+    if (expectedState == null) return false;
+
+    final actualState = recipes.any((recipe) => recipe.id == recipeId);
+
+    // If the actual state matches expected state, remove from loading
+    if (actualState == expectedState) {
+      // Defer the state update to avoid calling setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _savingRecipeIds.remove(recipeId);
+            _expectedSavedStates.remove(recipeId);
+          });
+        }
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Clear any stale loading states when the screen is first built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _savingRecipeIds.clear();
+          _expectedSavedStates.clear();
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,59 +116,18 @@ class _SavedScreenState extends State<SavedScreen> {
                   }
 
                   return ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: EdgeInsets.zero,
                     itemCount: recipes.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    separatorBuilder: (_, __) => const SizedBox(height: 24),
                     itemBuilder: (context, index) {
                       final recipe = recipes[index];
-                      final time = recipe.timeLabel;
-
-                      return Card(
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.all(12),
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: recipe.primaryImage.isNotEmpty
-                                ? Image.network(
-                                    recipe.primaryImage,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                  )
-                                : Container(
-                                    width: 56,
-                                    height: 56,
-                                    color: Colors.grey[200],
-                                    alignment: Alignment.center,
-                                    child: const Icon(Icons.restaurant_menu),
-                                  ),
-                          ),
-                          title: Text(
-                            recipe.name,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('By ${recipe.authorDisplay}'),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  const Icon(Icons.star, size: 14, color: Colors.amber),
-                                  const SizedBox(width: 4),
-                                  Text(recipe.ratingSummary.average.toStringAsFixed(1)),
-                                  const SizedBox(width: 12),
-                                  const Icon(Icons.schedule, size: 14),
-                                  const SizedBox(width: 4),
-                                  Text(time),
-                                ],
-                              ),
-                            ],
-                          ),
-                          trailing: IconButton(
-                            onPressed: () => _toggleSave(user.uid, recipe),
-                            icon: const Icon(Icons.bookmark),
-                          ),
-                        ),
+                      return RecipeCardListTile(
+                        recipe: recipe,
+                        isSaved: true,
+                        isLoading: _isRecipeLoading(recipe.id, recipes),
+                        onToggleSave: () => _toggleSave(user.uid, recipe),
+                        onRate: () => _handleRate(context, user.uid, recipe),
                       );
                     },
                   );
@@ -140,24 +141,134 @@ class _SavedScreenState extends State<SavedScreen> {
   }
 
   Future<void> _toggleSave(String userId, Recipe recipe) async {
+    // Check the current state before toggling to determine the action
+    // In saved screen, all recipes are currently saved, so removing them
+    final wasSaved = true; // All recipes in saved screen are saved
+    final expectedState = false; // After toggle, they should be unsaved
+
+    // Add to loading set and track expected state
+    setState(() {
+      _savingRecipeIds.add(recipe.id);
+      _expectedSavedStates[recipe.id] = expectedState;
+    });
+
     try {
       await _repository.toggleSaveRecipe(userId: userId, recipeId: recipe.id);
-      if (!mounted) {
+      if (!mounted) return;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${recipe.name} removed from saved'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not update saved recipes.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      // Remove loading state on error
+      setState(() {
+        _savingRecipeIds.remove(recipe.id);
+        _expectedSavedStates.remove(recipe.id);
+      });
+    }
+  }
+
+  Future<void> _handleRate(
+    BuildContext context,
+    String userId,
+    Recipe recipe,
+  ) async {
+    try {
+      final existingRating = await _repository
+          .watchUserRating(userId: userId, recipeId: recipe.id)
+          .firstWhere((_) => true, orElse: () => null);
+
+      var selectedRating = existingRating ??
+          (recipe.ratingSummary.average == 0
+              ? 4.0
+              : recipe.ratingSummary.average.clamp(1.0, 5.0));
+
+      if (!mounted) return;
+      if (!context.mounted) return;
+
+      final result = await showModalBottomSheet<double>(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setState) {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Rate ${recipe.name}',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Slider(
+                      value: selectedRating,
+                      min: 1,
+                      max: 5,
+                      divisions: 8,
+                      label: selectedRating.toStringAsFixed(1),
+                      onChanged: (value) {
+                        setState(() => selectedRating = value);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () =>
+                          Navigator.of(context).pop(selectedRating),
+                      child: const Text('Submit rating'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (result == null) {
         return;
       }
+
+      await _repository.rateRecipe(
+        userId: userId,
+        recipeId: recipe.id,
+        rating: result,
+      );
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${recipe.name} removed from saved'),
+        const SnackBar(
+          content: Text('Thanks for rating!'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on StateError catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign in to rate recipes.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not update saved recipes.'),
+          content: Text('Could not submit rating.'),
           behavior: SnackBarBehavior.floating,
         ),
       );

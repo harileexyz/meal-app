@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
+import 'package:meal_app/ui/details/details_screen.dart';
 import 'package:provider/provider.dart';
 
 import '../../stores/home_store.dart';
@@ -24,7 +25,16 @@ class RecentRecipes extends StatelessWidget {
               ),
             ),
             TextButton(
-              onPressed: () {},
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => Provider<HomeStore>.value(
+                      value: homeStore,
+                      child: const DetailsScreen(title: 'Recent Recipies'),
+                    ),
+                  ),
+                );
+              },
               child: const Text(
                 'See all',
                 style: TextStyle(
@@ -52,7 +62,8 @@ class RecentRecipes extends StatelessWidget {
                 return Center(
                   child: Text(
                     'Could not load recent recipes',
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
                     textAlign: TextAlign.center,
                   ),
                 );
@@ -90,7 +101,8 @@ class RecentRecipes extends StatelessWidget {
                                   height: 80,
                                   color: Colors.grey[200],
                                   alignment: Alignment.center,
-                                  child: const Icon(Icons.restaurant_menu, size: 24),
+                                  child: const Icon(Icons.restaurant_menu,
+                                      size: 24),
                                 ),
                         ),
                         const SizedBox(height: 8),

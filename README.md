@@ -1,78 +1,168 @@
 # Meal Prep Planner
 
-A Flutter starter project for a meal prep planning app that uses Firebase Authentication for email and password sign-in. After a successful login or sign-up, users are redirected to a simple home screen that will later grow into the full meal planning experience.
+A learning-focused Flutter app that evolves into a production-quality meal planning experience. The project serves two purposes:
 
-## Features
+1. Build a Firebase-backed recipe browser/saver for personal meal prep.
+2. Practice modern Flutter architecture patterns (MVVM, state management with MobX, repository pattern, logging, etc.).
 
-- Firebase Authentication with email/password sign-in and registration flows
-- Stream-based auth gate that redirects authenticated users to the home screen
-- Friendly error messaging and form validation for common auth scenarios
-- Placeholder home page with quick sign-out support, ready for future meal planning features
+This README is a running document that records the decisions, tools, and practices used along the way.
 
-## Getting started
+---
 
-### 1. Install the tooling
+## Quick start
 
-Make sure the following tools are installed locally:
+1. **Clone & install deps**
+   ```bash
+   flutter pub get
+   ```
+   (Run locally; the sandbox cannot reach pub.dev.)
 
-- [Flutter](https://docs.flutter.dev/get-started/install) (3.16 or newer is recommended)
-- Dart SDK (bundled with Flutter)
-- [Firebase CLI](https://firebase.google.com/docs/cli) and the [FlutterFire CLI](https://firebase.google.com/docs/flutter/setup?platform=ios#install_the_flutterfire_cli) (`dart pub global activate flutterfire_cli`)
+2. **Configure Firebase**
+   - Create a Firebase project (e.g. `meal-prep-8cc05`).
+   - Enable Authentication (Email/Password or Google Sign-In) and Firestore.
+   - Download platform config files (`google-services.json`, `GoogleService-Info.plist`).
+   - Regenerate `lib/firebase_options.dart` with the FlutterFire CLI:
+     ```bash
+     flutterfire configure
+     ```
 
-### 2. Create a Firebase project
+3. **Seed Firestore (optional)**
+   ```bash
+   flutter run -d <device-id> --no-pub --target tool/seed_dummy_data.dart
+   ```
+   This writes sample categories and recipes used by the home feed.
 
-1. Visit the [Firebase console](https://console.firebase.google.com/), create a project, and register the platforms you plan to target (Android, iOS, Web, etc.).
-2. Enable **Email/Password** as a sign-in method under **Build → Authentication → Sign-in method**.
-3. Download the platform configuration files that Firebase provides:
-   - `android/app/google-services.json`
-   - `ios/Runner/GoogleService-Info.plist`
-   - `macos/Runner/GoogleService-Info.plist` (if you target macOS)
-   - Web configuration is handled through the generated `firebase_options.dart`.
+4. **Run the app**
+   ```bash
+   flutter run
+   ```
 
-### 3. Generate Firebase options
+---
 
-From the project root run the FlutterFire CLI to generate the correct options file for the platforms you configured:
+## Architecture & state management
 
-```bash
-flutterfire configure
+### High-level pattern
+
+The app follows an MVVM-inspired structure:
+
+```
+Widget (View) ──calls──▶ MobX Store (ViewModel) ──delegates──▶ Repository ──▶ Firestore/Auth
+   ▲                               │
+   └───────── Observer rebuilds ◀──┘
 ```
 
-This command overwrites `lib/firebase_options.dart` with the correct values for your Firebase project and updates the platform builds with the necessary Gradle/Xcode configuration. The current file in the repository contains placeholder strings that must be replaced before the app will run.
+- **Views (Widgets)** – build the UI, dispatch user events, and observe store state via `Observer` widgets.
+- **Stores (MobX)** – encapsulate UI logic, manage subscriptions to repositories, expose observable state, and surface actions (`HomeStore` currently drives the home tab).
+- **Repositories** – coordinate with Firebase while returning domain models (e.g. `RecipeRepository` for Firestore access).
+- **Models** – plain Dart objects (`Recipe`, `Category`, `RatingSummary`, etc.) typed for secure parsing/serialization.
+- **Utilities** – cross-cutting concerns such as logging (`AppLogger`).
 
-### 4. Install dependencies
+### Dependency injection
 
-Fetch the project dependencies:
+For now, dependency wiring is handled with `provider`:
 
-```bash
-flutter pub get
-```
+- `HomePage` creates a single `HomeStore` and exposes it via `Provider` to child widgets.
+- Widgets retrieve the store with `context.read<HomeStore>()` and listen using `Observer`.
+- As the project grows we can move to `get_it` or Riverpod, but provider keeps things lightweight for learning.
 
-### 5. Run the application
+### Stores
 
-With Firebase configured and dependencies installed, run the app on your desired device or emulator:
+- `lib/stores/home_store.dart` owns all home-tab state.
+  - Observables: trending recipes, recent recipes, categories, saved recipe IDs, loading/error flags.
+  - Actions: `refresh`, `toggleSave`, `rateRecipe`, `getUserRating`.
+  - Subscribes to Firestore streams via `RecipeRepository` and updates observables.
+  - Manages per-user state (saved IDs/ratings) based on FirebaseAuth user ID.
 
-```bash
-flutter run
-```
+Future work: create `AuthStore`, `SavedStore`, etc. using the same pattern.
 
-Use the email/password form to create a new account or sign in with an existing one. Successful authentication takes the user to the home screen where you can add future meal planning features.
+---
 
-## Project structure
+## Data & Firestore practices
+
+- **Collections & schema** documented in [`docs/firestore_schema.md`](docs/firestore_schema.md).
+- Composite indexes are defined in `firestore.indexes.json` and deployed via `firebase deploy --only firestore:indexes`.
+- Repositories use typed models to avoid runtime map lookups.
+- Reads are mostly streaming (`snapshots()`) for live UI updates. `refreshHomeData()` forces fresh server reads (pull-to-refresh).
+- User-specific data (saves/ratings) live under `users/{uid}/...` sub-collections for easy security rule enforcement.
+
+## Networking/API calls
+
+All Firebase calls flow through `RecipeRepository`:
+
+- `watchTrendingRecipes`, `watchRecentRecipes`, `watchCategories` return streams of models.
+- `toggleSaveRecipe` and `rateRecipe` wrap Firestore transactions to keep counters accurate.
+- `refreshHomeData` hits Firestore with `GetOptions(source: Source.server)` to bypass cache during pull-to-refresh.
+
+Stores subscribe to these streams and translate results into `ObservableList` / `ObservableSet` for the UI.
+
+---
+
+## UI guidelines & components
+
+- Home tab is composed of modular widgets (`TrendingRecipes`, `PopularCategories`, `RecentRecipes`, `PopularCreators`) that simply watch store data.
+- Lists use fixed heights plus `Flexible`/`Expanded` to avoid `RenderFlex overflow` issues on narrow devices.
+- Pull-to-refresh uses `RefreshIndicator` tied to `HomeStore.refresh`.
+- Snackbar messaging centralised in widgets for quick feedback.
+- Reusable components (e.g., `_RecipeCard`) favour defensive fallbacks (placeholder image, initials when avatar missing).
+
+---
+
+## Logging & diagnostics
+
+- `AppLogger` wraps the [`logger`](https://pub.dev/packages/logger) package.
+- Use `AppLogger.i.d/w/e` instead of `print` for structured output.
+- Stores log errors via `_handleError`, which also exposes messages to the UI.
+
+---
+
+## Project layout
 
 ```
 lib/
-├── app.dart                # Root MaterialApp with theme and navigation setup
-├── auth/
-│   ├── auth_gate.dart      # Listens to auth state changes and redirects accordingly
-│   └── auth_screen.dart    # Email/password login & sign-up form
-├── firebase_options.dart   # Placeholder Firebase configuration (replace via FlutterFire CLI)
-└── home/
-    └── home_page.dart      # Placeholder home view with a sign-out action
+├── app.dart                    # Root MaterialApp
+├── main.dart                   # App entry, logger init, Firebase init
+├── components/                 # UI building blocks for the home feed
+├── repositories/               # Firestore repository layer
+├── stores/                     # MobX stores (currently HomeStore)
+├── models/                     # Typed data models
+├── utils/                      # Helpers (AppLogger)
+├── home/                       # Home page + view wiring
+├── auth/, ai/, profile/, saved/ # Feature modules (work in progress)
+└── theme/                      # App-wide theming
 ```
 
-## Next steps
+Documentation lives under `docs/` (`architecture.md`, `firestore_schema.md`, etc.).
 
-- Replace the placeholder Firebase configuration with real values generated by the FlutterFire CLI.
-- Add form enhancements such as password reset and verification emails.
-- Start building the actual meal planning features (recipes, prep schedule, shopping list, etc.).
+---
 
+## Tooling & scripts
+
+- `tool/seed_dummy_data.dart` seeds Firestore with starter recipes/categories (run using `flutter run --target ...`).
+- `firebase deploy --only firestore:indexes` to publish index changes.
+- `flutter pub run build_runner build` (future) if/when MobX stores use code generation.
+
+---
+
+## Learning notes (keep adding!)
+
+- Flutter UI is declarative; use immutable widgets and let state (stores) drive rebuilds.
+- MobX observables simplify reactive updates; remember to wrap mutations in `runInAction` when changing state asynchronously.
+- Firestore `snapshots()` deliver cached data first; call `refreshHomeData()` for server freshness.
+- Composite indexes require exact order/direction matching the query (`ratingSummary.average DESC`, `__name__ DESC`).
+- Debugging layout: watch for `RenderFlex overflow` warnings; ensure widgets have constrained heights/widths (`SizedBox`, `Flexible`).
+- Logging visually—`logger` prints with timestamps/emojis to quickly trace state transitions.
+
+Add more lessons learned, TODOs, and architectural decisions here as the project evolves.
+
+---
+
+## Roadmap / TODO
+
+- [ ] Create `AuthStore` to wrap FirebaseAuth streams and expose user/session state.
+- [ ] Convert Saved tab to use a dedicated MobX store instead of direct repository access.
+- [ ] Implement recipe detail screens with hero animations.
+- [ ] Add Firestore security rules and tests.
+- [ ] Evaluate introduction of `get_it` or Riverpod for dependency management at scale.
+- [ ] Add integration tests using the Firestore emulator.
+
+PRs and experiments welcome—this project is meant to grow along with new Flutter knowledge.

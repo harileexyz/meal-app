@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'auth/auth_gate.dart';
+import 'theme/app_theme.dart';
 
 class MealPrepApp extends StatelessWidget {
   const MealPrepApp({super.key});
@@ -10,10 +11,7 @@ class MealPrepApp extends StatelessWidget {
     return MaterialApp(
       title: 'Meal Prep Plan',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F855A)),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light(),
       home: const AuthGate(),
     );
   }

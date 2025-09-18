@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 
 import 'app.dart';
 import 'firebase_options.dart';
+import 'utils/app_logger.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  AppLogger.i.d('Logger initialised (debug build).');
 
   try {
     await Firebase.initializeApp(
